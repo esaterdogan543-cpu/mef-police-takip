@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
+from streamlit_gsheets import GSheetsConnection
 import pyotp
 import os
 
@@ -12,111 +13,52 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# --- ÖZEL CSS TASARIMI (Logosuz ve Ortalanmış Giriş Ekranı) ---
+# --- ÖZEL CSS TASARIMI ---
 st.markdown("""
 <style>
-    /* Genel Arka Plan */
-    .stApp {
-        background-color: #f0f2f5;
-    }
-    
-    /* GİRİŞ EKRANI KURUMSAL ÜST BAŞLIK */
+    .stApp { background-color: #f0f2f5; }
     .kurumsal-header {
-        background-color: #1e3a8a; /* Kurumsal Koyu Mavi */
+        background-color: #1e3a8a;
         padding: 40px 20px;
         border-radius: 15px 15px 0 0;
-        margin-bottom: 0px;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-        
-        /* İçerikleri milimetrik ORTALIYORUZ */
         display: flex !important;
         flex-direction: column !important;
         align-items: center !important;
         justify-content: center !important;
         text-align: center !important;
     }
-
-    /* Yazılar */
-    .kurumsal-header h2 {
-        color: white !important;
-        margin: 0 !important;
-        font-weight: 700 !important;
-        font-size: 28px !important;
-        text-align: center !important;
-        width: 100%;
-    }
-
-    .kurumsal-header h4 {
-        color: #e2e8f0 !important;
-        margin: 10px 0 0 0 !important;
-        font-weight: 400 !important;
-        opacity: 0.9;
-        font-size: 16px !important;
-        text-align: center !important;
-        width: 100%;
-    }
-
-    /* Giriş Kartı */
+    .kurumsal-header h2 { color: white !important; margin: 0 !important; font-weight: 700 !important; font-size: 28px !important; width: 100%; }
+    .kurumsal-header h4 { color: #e2e8f0 !important; margin: 10px 0 0 0 !important; font-weight: 400 !important; font-size: 16px !important; width: 100%; }
     .login-box {
-        background-color: white;
-        padding: 40px;
-        border-radius: 0 0 15px 15px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-        border: 1px solid #e2e8f0;
-        border-top: none;
-        margin-bottom: 50px;
+        background-color: white; padding: 40px; border-radius: 0 0 15px 15px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1); border: 1px solid #e2e8f0; border-top: none; margin-bottom: 50px;
     }
-    
-    /* Metrik Kartları Tasarımı */
     div[data-testid="metric-container"] {
-        background-color: white;
-        border-radius: 10px;
-        padding: 15px 20px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-        border: 1px solid #e2e8f0;
-        border-left: 4px solid #3b82f6;
+        background-color: white; border-radius: 10px; padding: 15px 20px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; border-left: 4px solid #3b82f6;
     }
-    
-    /* Buton Tasarımları */
-    .stButton>button {
-        background-color: #1e3a8a;
-        color: white;
-        border-radius: 8px;
-        border: none;
-        padding: 12px 20px;
-        font-weight: 600;
-        font-size: 16px;
-    }
-    .stButton>button:hover {
-        background-color: #3b82f6;
-        color: white;
-    }
+    .stButton>button { background-color: #1e3a8a; color: white; border-radius: 8px; border: none; padding: 12px 20px; font-weight: 600; font-size: 16px; }
+    .stButton>button:hover { background-color: #3b82f6; color: white; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- KLASÖR VE DOSYA KONTROLLERİ (İnternet Uyumlu Güncelleme) ---
-# Dosyaları artık masaüstünde değil, uygulamanın çalıştığı ana klasörde tutuyoruz.
-EXCEL_DOSYASI = "police_veritabani.xlsx"
-KURULUM_DOSYASI = "auth_durumu.txt"
-
-# --- EXCEL VERİ TABANI AYARLARI ---
-if not os.path.exists(EXCEL_DOSYASI):
-    df_bos = pd.DataFrame(columns=[
-        'Police No', 'Musteri Adi Soyadi', 'Plaka', 'Police Türü', 
-        'Sigorta Şirketi', 'Acente', 'Net Prim (TL)', 'Brüt Prim (TL)', 'Komisyon (TL)',
-        'Tanzim Tarihi', 'Başlangıç Tarihi', 'Bitiş Tarihi'
-    ])
-    df_bos.to_excel(EXCEL_DOSYASI, index=False)
+# --- GOOGLE SHEETS BAĞLANTISI ---
+conn = st.connection("gsheets", type=GSheetsConnection)
 
 def verileri_yukle():
-    return pd.read_excel(EXCEL_DOSYASI)
+    try:
+        # Tablodaki tüm verileri çeker
+        return conn.read(ttl="5s")
+    except Exception:
+        # Eğer tablo tamamen boşsa hata vermemesi için şablon döndürür
+        return pd.DataFrame(columns=[
+            'Police No', 'Musteri Adi Soyadi', 'Plaka', 'Police Türü', 
+            'Sigorta Şirketi', 'Acente', 'Net Prim (TL)', 'Brüt Prim (TL)', 'Komisyon (TL)',
+            'Tanzim Tarihi', 'Başlangıç Tarihi', 'Bitiş Tarihi'
+        ])
 
-def veri_kaydet(yeni_satir):
-    df_mevcut = verileri_yukle()
-    df_yeni = pd.DataFrame([yeni_satir])
-    df_guncel = pd.concat([df_mevcut, df_yeni], ignore_index=True)
-    df_guncel.to_excel(EXCEL_DOSYASI, index=False)
-
+# --- 2FA AYARLARI ---
+KURULUM_DOSYASI = "auth_durumu.txt"
 otp_secret = "JBSWY3DPEHPK3PXP" 
 totp = pyotp.TOTP(otp_secret)
 
@@ -127,17 +69,10 @@ def sifre_kontrol():
     if "sifre_dogrulandi" not in st.session_state:
         st.session_state.sifre_dogrulandi = False
 
-    # 1. ADIM: ŞİFRE EKRANI
     if not st.session_state.sifre_dogrulandi:
         col1, col2, col3 = st.columns([1, 1.5, 1])
         with col2:
-            st.markdown("""
-            <div class='kurumsal-header'>
-                <h2>MEF Global Sigorta</h2>
-                <h4>Yönetim Paneli Girişi</h4>
-            </div>
-            """, unsafe_allow_html=True)
-            
+            st.markdown("<div class='kurumsal-header'><h2>MEF Global Sigorta</h2><h4>Yönetim Paneli Girişi</h4></div>", unsafe_allow_html=True)
             st.markdown("<div class='login-box'>", unsafe_allow_html=True)
             with st.form("giris_formu"):
                 kullanici = st.text_input("👤 Kullanıcı Adı", placeholder="Kullanıcı adınızı girin")
@@ -153,24 +88,16 @@ def sifre_kontrol():
             st.markdown("</div>", unsafe_allow_html=True)
         return False
 
-    # 2. ADIM: 2FA KODU EKRANI
     elif st.session_state.sifre_dogrulandi and not st.session_state.giris_yapildi:
         col1, col2, col3 = st.columns([1, 1.5, 1])
         with col2:
-            st.markdown("""
-            <div class='kurumsal-header'>
-                <h2>İki Faktörlü Doğrulama</h2>
-                <h4>Kurulum ve Giriş</h4>
-            </div>
-            """, unsafe_allow_html=True)
-            
+            st.markdown("<div class='kurumsal-header'><h2>İki Faktörlü Doğrulama</h2><h4>Kurulum ve Giriş</h4></div>", unsafe_allow_html=True)
             st.markdown("<div class='login-box'>", unsafe_allow_html=True)
             if not os.path.exists(KURULUM_DOSYASI):
                 st.warning("📣 Bu anahtarı telefonunuzdaki Google Authenticator uygulamasına BİR KEZ ekleyin.")
                 st.info(f"Anahtar kod: *{otp_secret}*")
                 if st.button("Kurulumu Tamamladım, Anahtarı Gizle 🕵️‍♂️", use_container_width=True):
-                    with open(KURULUM_DOSYASI, "w") as f:
-                        f.write("Kurulum Tamamlandi")
+                    with open(KURULUM_DOSYASI, "w") as f: f.write("Kurulum Tamamlandi")
                     st.success("Kurulum başarıyla kaydedildi!")
                     st.rerun()
                 st.divider()
@@ -189,14 +116,13 @@ def sifre_kontrol():
         
     return True
 
-# --- ASIL PROGRAM (PANELE GİRİŞ) ---
+# --- ASIL PROGRAM ---
 if sifre_kontrol():
     st.markdown("<h1 style='margin-bottom: 0px;'>MEF Global Sigorta</h1><h3 style='margin-top: -10px; color: #64748b; font-weight: 400;'>Poliçe Takip ve Yönetim Sistemi</h3>", unsafe_allow_html=True)
     st.divider()
     
     df_policeler = verileri_yukle()
 
-    # --- YENİ POLİÇE EKLEME ALANI (SOL MENÜ) ---
     with st.sidebar:
         st.markdown("<h2 style='text-align: center; color: #1e3a8a;'>➕ Yeni Poliçe</h2>", unsafe_allow_html=True)
         st.write("")
@@ -219,17 +145,17 @@ if sifre_kontrol():
                 
             tanzim = st.date_input("📅 Tanzim Tarihi", datetime.now())
             col_tarih1, col_tarih2 = st.columns(2)
-            with col_tarih1:
-                baslangic = st.date_input("🏁 Başlangıç", datetime.now())
-            with col_tarih2:
-                bitis = st.date_input("🔚 Bitiş", datetime.now() + timedelta(days=365))
+            with col_tarih1: baslangic = st.date_input("🏁 Başlangıç", datetime.now())
+            with col_tarih2: bitis = st.date_input("🔚 Bitiş", datetime.now() + timedelta(days=365))
                 
             st.write("")
             submit = st.form_submit_button("Poliçeyi Kaydet 💾", use_container_width=True)
             
             if submit:
                 if police_no and musteri:
-                    yeni_veri = {
+                    # Mevcut veriyi alıp yeni satırı ekliyoruz
+                    df_mevcut = verileri_yukle()
+                    yeni_veri = pd.DataFrame([{
                         'Police No': police_no,
                         'Musteri Adi Soyadi': musteri,
                         'Plaka': plaka if plaka else "-",
@@ -242,33 +168,36 @@ if sifre_kontrol():
                         'Tanzim Tarihi': tanzim.strftime('%Y-%m-%d'),
                         'Başlangıç Tarihi': baslangic.strftime('%Y-%m-%d'),
                         'Bitiş Tarihi': bitis.strftime('%Y-%m-%d')
-                    }
-                    veri_kaydet(yeni_veri)
-                    st.success("✅ Poliçe başarıyla kaydedildi!")
+                    }])
+                    
+                    # Boş DataFrame kontrolü
+                    if df_mevcut.empty:
+                        df_guncel = yeni_veri
+                    else:
+                        df_guncel = pd.concat([df_mevcut, yeni_veri], ignore_index=True)
+                    
+                    # Google Sheets'e güncel halini yazıyoruz
+                    conn.update(data=df_guncel)
+                    st.success("✅ Poliçe başarıyla Google E-Tablo'ya kaydedildi!")
                     st.rerun() 
                 else:
                     st.error("⚠️ Lütfen Poliçe No ve Müşteri Adı alanlarını boş bırakmayın.")
 
-    # --- POLİÇE LİSTELEME VE FİLTRELEME ALANI ---
+    # --- POLİÇE LİSTELEME VE FİLTRELEME ---
     st.markdown("<h3 style='margin-top: 20px;'>📊 Mevcut Poliçeler ve Filtreleme</h3>", unsafe_allow_html=True)
     df_goster = df_policeler.copy()
     col_ara, col_bas, col_bit = st.columns([2, 1, 1])
     
-    with col_ara:
-        arama = st.text_input("🔍 Ara (Müşteri, Plaka veya Poliçe No)", placeholder="Müşteri adı veya plaka yazın...")
+    with col_ara: arama = st.text_input("🔍 Ara (Müşteri, Plaka veya Poliçe No)", placeholder="Müşteri adı veya plaka yazın...")
     
-    # Dinamik Tarih Filtreleme (Bulunulan Ayın Başı ve Sonu)
     simdi = datetime.now()
     ayin_basi = datetime(simdi.year, simdi.month, 1)
     
-    with col_bas:
-        filtre_baslangic = st.date_input("📅 Filtre Başlangıç", ayin_basi)
-    with col_bit:
-        filtre_bitis = st.date_input("📅 Filtre Bitiş", simdi.date())
+    with col_bas: filtre_baslangic = st.date_input("📅 Filtre Başlangıç", ayin_basi)
+    with col_bit: filtre_bitis = st.date_input("📅 Filtre Bitiş", simdi.date())
 
-    # Filtreleme İşlemleri
-    if not df_goster.empty:
-        df_goster['Tanzim Tarihi DT'] = pd.to_datetime(df_goster['Tanzim Tarihi'])
+    if not df_goster.empty and 'Tanzim Tarihi' in df_goster.columns:
+        df_goster['Tanzim Tarihi DT'] = pd.to_datetime(df_goster['Tanzim Tarihi'], errors='coerce')
         bas_dt = pd.to_datetime(filtre_baslangic)
         bit_dt = pd.to_datetime(filtre_bitis)
         df_goster = df_goster[(df_goster['Tanzim Tarihi DT'] >= bas_dt) & (df_goster['Tanzim Tarihi DT'] <= bit_dt)]
@@ -276,22 +205,17 @@ if sifre_kontrol():
         
         if arama:
             df_goster = df_goster[
-                df_goster['Musteri Adi Soyadi'].str.contains(arama, case=False, na=False) |
-                df_goster['Police No'].str.contains(str(arama), case=False, na=False) |
-                df_goster['Plaka'].str.contains(arama, case=False, na=False)
+                df_goster['Musteri Adi Soyadi'].astype(str).str.contains(arama, case=False, na=False) |
+                df_goster['Police No'].astype(str).str.contains(str(arama), case=False, na=False) |
+                df_goster['Plaka'].astype(str).str.contains(arama, case=False, na=False)
             ]
 
-    # Metrikleri ve Tabloyu Ekrana Basma
     if not df_goster.empty:
         col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-        with col_m1:
-            st.metric("Toplam Net Prim", f"{df_goster['Net Prim (TL)'].sum():,.2f} TL")
-        with col_m2:
-            st.metric("Toplam Brüt Prim", f"{df_goster['Brüt Prim (TL)'].sum():,.2f} TL")
-        with col_m3:
-            st.metric("Kazanılan Komisyon", f"{df_goster['Komisyon (TL)'].sum():,.2f} TL")
-        with col_m4:
-            st.metric("Kayıtlı Poliçe", f"{len(df_goster)} Adet")
+        with col_m1: st.metric("Toplam Net Prim", f"{pd.to_numeric(df_goster['Net Prim (TL)'], errors='coerce').sum():,.2f} TL")
+        with col_m2: st.metric("Toplam Brüt Prim", f"{pd.to_numeric(df_goster['Brüt Prim (TL)'], errors='coerce').sum():,.2f} TL")
+        with col_m3: st.metric("Kazanılan Komisyon", f"{pd.to_numeric(df_goster['Komisyon (TL)'], errors='coerce').sum():,.2f} TL")
+        with col_m4: st.metric("Kayıtlı Poliçe", f"{len(df_goster)} Adet")
         
         st.write("")
         st.divider()
